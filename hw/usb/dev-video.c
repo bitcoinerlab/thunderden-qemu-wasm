@@ -725,14 +725,23 @@ static void usb_video_desc_new(USBDevice *dev)
 static void usb_video_desc_free(USBDevice *dev)
 {
     const USBDesc *d = dev->usb_desc;
-    g_free((void *)d->full->confs->ifs);
-    g_free((void *)d->full->confs);
-    g_free((void *)d->high->confs->ifs);
-    g_free((void *)d->high->confs);
-    g_free((void *)d->super->confs);
-    g_free((void *)d->full);
-    g_free((void *)d->high);
-    g_free((void *)d->super);
+    const USBDescDevice *devices[] = { d->full, d->high };
+
+    /* Only full/high-speed descriptors are allocated. The VC descriptors are
+     * static; only the streaming interface owns its extra descriptor data. */
+    for (size_t i = 0; i < ARRAY_SIZE(devices); i++) {
+        const USBDescConfig *config = devices[i]->confs;
+        const USBDescIface *streaming = &config->ifs[VS0];
+
+        for (int j = 0; j < streaming->ndesc; j++) {
+            g_free((void *)streaming->descs[j].data);
+        }
+        g_free((void *)streaming->descs);
+        g_free((void *)config->ifs);
+        g_free((void *)config);
+        g_free((void *)devices[i]);
+    }
+    g_free((void *)d);
 
     dev->usb_desc = NULL;
 }
@@ -1294,7 +1303,18 @@ static void usb_video_set_interface(USBDevice *dev, int iface,
 static void usb_video_unrealize(USBDevice *dev)
 {
     USBBus *bus = usb_bus_from_device(dev);
+    USBVideoState *s = USB_VIDEO(dev);
+    USBVideoControlStats *status;
+
     trace_usb_video_unrealize(bus->busnr, dev->addr);
+    if (s->video->is_streaming) {
+        qemu_videodev_stream_off(s->video, NULL);
+    }
+    s->video->registered = false;
+    while ((status = QTAILQ_FIRST(&s->control_status))) {
+        QTAILQ_REMOVE(&s->control_status, status, list);
+        g_free(status);
+    }
     usb_video_desc_free(dev);
 }
 
