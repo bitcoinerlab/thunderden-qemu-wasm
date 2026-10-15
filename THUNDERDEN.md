@@ -50,9 +50,10 @@ docker run --rm \
 
 The loader, worker, Wasm binary and BIOS assets are written to
 `build/thunderden-wasm/emulator/`. These are generated artifacts, not source files.
-The initial build is a **headless development milestone**: framebuffer presentation,
-browser input and live camera capture need integration in the website. Compiling
-successfully alone does not establish that Thunderden runs in a browser.
+The emulator itself is headless. The companion website now presents its framebuffer
+and forwards keyboard input using QMP, without changing the guest. See
+[the website's local-start instructions](https://github.com/bitcoinerlab/thunderden-web#open-the-interactive-prototype-locally).
+Live camera capture still needs connecting.
 
 ## Native development
 
@@ -79,6 +80,10 @@ python3 scripts/thunderden/test-video-device.py build/native/qemu-system-x86_64
 # Requires Pillow, qrencode and tesseract:
 python3 scripts/thunderden/test-image-camera.py \
   build/native/qemu-system-x86_64 /path/to/thunderden.img /path/to/new-test-output
+# Match the browser's read-only virtio boot disk:
+python3 scripts/thunderden/test-image-camera.py \
+  build/native/qemu-system-x86_64 /path/to/thunderden.img /path/to/other-test-output \
+  --virtio-readonly
 # Requires Python Playwright and an installed Chromium:
 python3 scripts/thunderden/test-wasm.py build/thunderden-wasm/emulator \
   --chromium /path/to/chromium
@@ -95,6 +100,8 @@ and after:
 ```
 
 Native registration, QOM property reads and repeated unplug/replug also passed.
+The full native camera/address proof also passed with `--virtio-readonly`, matching
+the website's boot-disk configuration, with the same before/after image hash.
 The Wasm build produced a roughly 12 MiB binary. Both browser smoke tests passed
 in headless Chromium on Linux: backend discovery, then QMP startup with an emulated
 UVC camera and virtio RNG device. These do not boot the guest image, deliver camera
@@ -104,13 +111,27 @@ The generated Emscripten loader uses Web Crypto's `crypto.getRandomValues()` for
 its random device. The guest RNG path still needs an end-to-end generation check;
 never replace it with deterministic seeds, snapshots or `Math.random()`.
 
+## Interactive browser boot
+
+On 2026-10-15 the companion website booted the same checksum-pinned preview.8 image
+inside Chromium on Linux. An automated check read the actual framebuffer and used
+browser keyboard events to select Regtest, enter the public-key menu and return
+with Escape. The network chooser appeared in about 23 seconds.
+
+The working browser configuration uses a read-only virtio boot disk:
+
+```sh
+-drive file=/thunderden.img,format=raw,if=virtio,readonly=on
+```
+
+IDE snapshot initialization stalled in the browser; its exact cause has not been
+isolated. Keep the proven read-only virtio configuration for the website.
+
 ## Next integration milestone
 
-1. Present the emulated framebuffer and forward keyboard input in the website.
-2. Boot the same checksum-pinned preview.8 image inside the browser.
-3. Connect `getUserMedia()` to the existing frame-file backend; repeat the native
+1. Connect `getUserMedia()` to the existing frame-file backend; repeat the native
    static QR proof, then test animated QR streams and cancellation.
-4. Verify guest RNG initialization and recovery-word generation without camera
+2. Verify guest RNG initialization and recovery-word generation without camera
    entropy. Camera entropy/NIST assessment and its timing need separate testing.
-5. Measure on Chrome/macOS, including Apple Silicon, before claiming support;
+3. Measure on Chrome/macOS, including Apple Silicon, before claiming support;
    Safari and Firefox are separate validation targets.

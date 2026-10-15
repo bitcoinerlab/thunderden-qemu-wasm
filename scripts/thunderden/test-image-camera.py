@@ -24,6 +24,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("qemu", type=Path)
 parser.add_argument("image", type=Path)
 parser.add_argument("output", type=Path)
+parser.add_argument("--virtio-readonly", action="store_true", help="Use the browser's read-only virtio boot disk instead of an IDE snapshot")
 args = parser.parse_args()
 out = args.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -44,9 +45,10 @@ qmp_path = out / "qmp.sock"
 if qmp_path.exists():
     raise RuntimeError(f"Remove the old test socket first: {qmp_path}")
 
+drive = "if=virtio,readonly=on" if args.virtio_readonly else "if=ide,snapshot=on"
 command = [str(args.qemu.resolve()), "-m", "1024", "-smp", "1", "-cpu", "qemu64",
            "-L", str(source / "pc-bios"), "-display", "none", "-nic", "none", "-no-reboot",
-           "-drive", f"file={image},format=raw,if=ide,snapshot=on",
+           "-drive", f"file={image},format=raw,{drive}",
            "-vga", "none", "-device", "VGA,xres=1280,yres=800",
            "-device", "virtio-rng-pci", "-device", "qemu-xhci,id=xhci",
            "-videodev", f"frame-file,id=cam0,path={frame_path}",
