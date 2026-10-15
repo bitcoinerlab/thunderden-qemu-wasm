@@ -20,16 +20,22 @@ the companion website:
 
 ```sh
 -device usb-ehci,id=ehci \
--videodev frame-file,id=cam0,path=/camera.yuyv \
+-videodev frame-file,id=cam0,path=/camera.yuyv,mode=browser \
 -device usb-video,bus=ehci.0,videodev=cam0
 ```
 
 `path` is in the **emulator host** filesystem (Emscripten's FS in a browser), not
-the guest filesystem. It contains exactly 614,400 bytes: one 640×480 YUYV frame,
-row-major, no padding. The virtual camera advertises 10 fps. Publish new frames
-by writing another file and atomically renaming it over this path. Frames already
-being read retain their original inode. This camera interface uses ordinary host
-files rather than guest-memory injection.
+the guest filesystem. It contains one complete, row-major YUYV frame, no padding:
+
+| Mode | Dimensions | Bytes | Virtual frame rate |
+| --- | --- | --- | --- |
+| `standard` (default) | 640×480 | 614,400 | 10 fps |
+| `browser` | 320×240 | 153,600 | 2 fps |
+
+Publish new frames by writing another file and atomically renaming it over this
+path. Frames already being read retain their original inode. This camera interface
+uses ordinary host files rather than guest-memory injection. The browser mode
+reduces capture/decoding work and old-frame buffering in the emulated guest.
 
 The same camera device and frame backend are exercised natively and through
 browser capture. It is not physical USB passthrough and does not require WebUSB
@@ -86,6 +92,10 @@ python3 scripts/thunderden/test-image-camera.py \
 python3 scripts/thunderden/test-image-camera.py \
   build/native/qemu-system-x86_64 /path/to/thunderden.img /path/to/other-test-output \
   --virtio-readonly
+# Exercise the smaller, lower-rate camera mode:
+python3 scripts/thunderden/test-image-camera.py \
+  build/native/qemu-system-x86_64 /path/to/thunderden.img /path/to/browser-mode-test-output \
+  --virtio-readonly --camera-mode browser
 # Requires Python Playwright and an installed Chromium:
 python3 scripts/thunderden/test-wasm.py build/thunderden-wasm/emulator \
   --chromium /path/to/chromium
@@ -145,9 +155,28 @@ passed earlier, but its Wasm guest scanner timed out despite receiving USB video
 data. EHCI passed the end-to-end browser scan without changing the guest image
 or guest clock configuration. The cause of the xHCI timeout is not isolated.
 
+### Responsiveness
+
+The website now uses a 640×480 guest display and the `browser` camera mode. A
+Linux/Chromium numbered-video comparison measured about 0.5 seconds of camera
+frame age, versus 7–8 seconds with the original 1280×800 display and 640×480/10 fps
+camera. The original guest's software preview rendering is expensive under x86-64
+Wasm emulation; feeding frames faster than it can consume them produces stale
+frames. Merely increasing website repaint frequency does not remove that backlog.
+
+The website separately reduced its screenshot wait from 500 ms to 33 ms, keeping
+one request in flight. Camera frame age, display refresh cadence and guest camera
+frame rate are different measurements. The browser mode intentionally caps the
+virtual camera at 2 fps, and does not establish macOS or physical-webcam performance.
+
+Both camera modes passed the native public-fixture QR/address test, with the
+unchanged release hash above. The website's 120-second numbered-video check
+measured about 0.51 seconds median frame age, 0.79 seconds maximum observed age
+and 1.99 complete frame changes per second, then cancelled the original scanner.
+
 ### Remaining checks
 
-1. Test physical webcams, animated QR streams and guest scan cancellation.
+1. Test physical webcams and animated QR streams; repeat cancellation across browsers.
 2. Verify guest RNG initialization and recovery-word generation without camera
    entropy. Camera entropy/NIST assessment and its timing need separate testing.
 3. Measure on Chrome/macOS, including Apple Silicon, before claiming support;

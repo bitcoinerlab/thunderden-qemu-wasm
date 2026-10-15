@@ -25,6 +25,7 @@ parser.add_argument("qemu", type=Path)
 parser.add_argument("image", type=Path)
 parser.add_argument("output", type=Path)
 parser.add_argument("--virtio-readonly", action="store_true", help="Use the browser's read-only virtio boot disk instead of an IDE snapshot")
+parser.add_argument("--camera-mode", choices=["standard", "browser"], default="standard")
 args = parser.parse_args()
 out = args.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -32,12 +33,13 @@ image = args.image.resolve()
 before = digest(image)
 source = Path(__file__).resolve().parents[2]
 address = "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu"
+width, height = (320, 240) if args.camera_mode == "browser" else (640, 480)
 subprocess.run(["qrencode", "-s", "6", "-m", "4", "-o", str(out / "qr.png"), address], check=True)
 with Image.open(out / "qr.png") as qr:
     qr = qr.convert("RGBA").convert("L").point(lambda value: 16 + value * 219 // 255)
-    frame = Image.new("L", (640, 480), 235)
-    frame.paste(qr, ((640 - qr.width) // 2, (480 - qr.height) // 2))
-raw = bytearray([128]) * (640 * 480 * 2)
+    frame = Image.new("L", (width, height), 235)
+    frame.paste(qr, ((width - qr.width) // 2, (height - qr.height) // 2))
+raw = bytearray([128]) * (width * height * 2)
 raw[::2] = frame.tobytes()
 frame_path = out / "camera.yuyv"
 frame_path.write_bytes(raw)
@@ -51,7 +53,7 @@ command = [str(args.qemu.resolve()), "-m", "1024", "-smp", "1", "-cpu", "qemu64"
            "-drive", f"file={image},format=raw,{drive}",
            "-vga", "none", "-device", "VGA,xres=1280,yres=800",
            "-device", "virtio-rng-pci", "-device", "qemu-xhci,id=xhci",
-           "-videodev", f"frame-file,id=cam0,path={frame_path}",
+           "-videodev", f"frame-file,id=cam0,path={frame_path},mode={args.camera_mode}",
            "-device", "usb-video,bus=xhci.0,videodev=cam0",
            "-qmp", f"unix:{qmp_path},server=on,wait=off"]
 

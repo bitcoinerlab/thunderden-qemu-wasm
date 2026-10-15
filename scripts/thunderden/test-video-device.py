@@ -6,11 +6,17 @@ import subprocess
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("qemu")
+parser.add_argument("--camera-mode", choices=["standard", "browser"], default="standard")
 args = parser.parse_args()
+invalid = subprocess.run([
+    args.qemu, "-display", "none", "-S", "-videodev",
+    "frame-file,id=cam0,path=/unused.yuyv,mode=unsupported",
+], capture_output=True, text=True, timeout=10)
+assert invalid.returncode != 0 and "mode must be standard or browser" in invalid.stderr, invalid.stderr
 process = subprocess.Popen([
     args.qemu, "-machine", "q35", "-nodefaults", "-display", "none", "-S",
     "-device", "qemu-xhci,id=xhci",
-    "-videodev", "frame-file,id=cam0,path=/unused.yuyv", "-qmp", "stdio",
+    "-videodev", f"frame-file,id=cam0,path=/unused.yuyv,mode={args.camera_mode}", "-qmp", "stdio",
 ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 try:

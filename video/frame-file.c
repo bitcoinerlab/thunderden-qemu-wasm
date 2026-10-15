@@ -16,28 +16,35 @@
 #define TYPE_FRAME_FILE "videodev-frame-file"
 OBJECT_DECLARE_SIMPLE_TYPE(FrameFile, FRAME_FILE)
 
-/* One conservative USB 2.0 mode, shared by fixture and browser capture. */
-#define FRAME_WIDTH 640
-#define FRAME_HEIGHT 480
-#define FRAME_FPS 10
-#define FRAME_BYTES (FRAME_WIDTH * FRAME_HEIGHT * 2)
-
 struct FrameFile {
     Videodev parent_obj;
     char *path;
     char *frame;
     int64_t next_frame;
+    unsigned width;
+    unsigned height;
+    unsigned fps;
 };
 
 static int frame_file_open(Videodev *vd, QemuOpts *opts, Error **errp)
 {
     FrameFile *s = FRAME_FILE(vd);
     const char *path = qemu_opt_get(opts, "path");
+    const char *mode = qemu_opt_get(opts, "mode");
+    bool browser = mode && !strcmp(mode, "browser");
 
     if (!path || !*path) {
         vd_error_setg(vd, errp, "frame-file requires path=<host YUYV file>");
         return VIDEODEV_RC_INVAL;
     }
+    if (mode && !browser && strcmp(mode, "standard")) {
+        vd_error_setg(vd, errp, "frame-file mode must be standard or browser");
+        return VIDEODEV_RC_INVAL;
+    }
+    /* Keep the native fixture mode; reduce browser work and stale frame queues. */
+    s->width = browser ? 320 : 640;
+    s->height = browser ? 240 : 480;
+    s->fps = browser ? 2 : 10;
     s->path = g_strdup(path);
     return VIDEODEV_RC_OK;
 }
@@ -53,6 +60,7 @@ static int frame_file_close(Videodev *vd, Error **errp)
 
 static int frame_file_enum_modes(Videodev *vd, Error **errp)
 {
+    FrameFile *s = FRAME_FILE(vd);
     VideoFramesize *size;
 
     vd->nmodes = 1;
@@ -61,12 +69,12 @@ static int frame_file_enum_modes(Videodev *vd, Error **errp)
     vd->modes[0].nframesize = 1;
     vd->modes[0].framesizes = g_new0(VideoFramesize, 1);
     size = &vd->modes[0].framesizes[0];
-    size->width = FRAME_WIDTH;
-    size->height = FRAME_HEIGHT;
+    size->width = s->width;
+    size->height = s->height;
     size->nframerate = 1;
     size->framerates = g_new0(VideoFramerate, 1);
     size->framerates[0].numerator = 1;
-    size->framerates[0].denominator = FRAME_FPS;
+    size->framerates[0].denominator = s->fps;
     return VIDEODEV_RC_OK;
 }
 
@@ -95,14 +103,15 @@ static int frame_file_claim(Videodev *vd, Error **errp)
         vd_error_setg(vd, errp, "cannot read camera frame: %s", error->message);
         return VIDEODEV_RC_ERROR;
     }
-    if (length != FRAME_BYTES) {
+    if (length != s->width * s->height * 2) {
         g_clear_pointer(&s->frame, g_free);
-        vd_error_setg(vd, errp, "expected %d bytes of 640x480 YUYV", FRAME_BYTES);
+        vd_error_setg(vd, errp, "expected %u bytes of %ux%u YUYV",
+                      s->width * s->height * 2, s->width, s->height);
         return VIDEODEV_RC_INVAL;
     }
     vd->current_frame.data = (uint8_t *)s->frame;
     vd->current_frame.bytes_left = length;
-    s->next_frame = now + NANOSECONDS_PER_SECOND / FRAME_FPS;
+    s->next_frame = now + NANOSECONDS_PER_SECOND / s->fps;
     return VIDEODEV_RC_OK;
 }
 
