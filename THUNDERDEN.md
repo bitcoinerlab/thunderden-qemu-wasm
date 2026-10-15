@@ -15,12 +15,13 @@ guest agent, replacement scanner, kernel module or extra initramfs.
 
 ## Camera interface
 
-Attach the standard UVC device to an emulated xHCI controller:
+Attach the standard UVC device to a virtual USB 2 EHCI controller, as used by
+the companion website:
 
 ```sh
--device qemu-xhci,id=xhci \
+-device usb-ehci,id=ehci \
 -videodev frame-file,id=cam0,path=/camera.yuyv \
--device usb-video,bus=xhci.0,videodev=cam0
+-device usb-video,bus=ehci.0,videodev=cam0
 ```
 
 `path` is in the **emulator host** filesystem (Emscripten's FS in a browser), not
@@ -30,9 +31,9 @@ by writing another file and atomically renaming it over this path. Frames alread
 being read retain their original inode. This camera interface uses ordinary host
 files rather than guest-memory injection.
 
-This permits the same camera device and frame backend to be exercised natively
-before browser capture is connected. It is not physical USB passthrough and does
-not require WebUSB or a USB-connected host camera.
+The same camera device and frame backend are exercised natively and through
+browser capture. It is not physical USB passthrough and does not require WebUSB
+or a USB-connected host camera.
 
 ## Wasm build
 
@@ -53,7 +54,8 @@ The loader, worker, Wasm binary and BIOS assets are written to
 The emulator itself is headless. The companion website now presents its framebuffer
 and forwards keyboard input using QMP, without changing the guest. See
 [the website's local-start instructions](https://github.com/bitcoinerlab/thunderden-web#open-the-interactive-prototype-locally).
-Live camera capture still needs connecting.
+The website's **Enable camera** button requests browser permission and feeds
+local frames to the existing host-side camera backend.
 
 ## Native development
 
@@ -127,10 +129,25 @@ The working browser configuration uses a read-only virtio boot disk:
 IDE snapshot initialization stalled in the browser; its exact cause has not been
 isolated. Keep the proven read-only virtio configuration for the website.
 
-## Next integration milestone
+## Browser camera integration
 
-1. Connect `getUserMedia()` to the existing frame-file backend; repeat the native
-   static QR proof, then test animated QR streams and cancellation.
+### Browser camera proof
+
+On 2026-10-15, the companion website's camera test passed in Chromium on Linux.
+Chromium's synthetic webcam delivered a public fixture QR through the real
+`getUserMedia()` API, RGBA-to-YUYV conversion, host frame file and emulated UVC
+device. The unchanged preview.8 image decoded it and verified the fixture address.
+Permission denial/retry, camera stop/restart and disconnection handling also passed.
+No physical webcam was accessed, and no real wallet material was used.
+
+The website uses EHCI for this path. xHCI device registration and native scanning
+passed earlier, but its Wasm guest scanner timed out despite receiving USB video
+data. EHCI passed the end-to-end browser scan without changing the guest image
+or guest clock configuration. The cause of the xHCI timeout is not isolated.
+
+### Remaining checks
+
+1. Test physical webcams, animated QR streams and guest scan cancellation.
 2. Verify guest RNG initialization and recovery-word generation without camera
    entropy. Camera entropy/NIST assessment and its timing need separate testing.
 3. Measure on Chrome/macOS, including Apple Silicon, before claiming support;
