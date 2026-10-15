@@ -1,5 +1,6 @@
 system_ss.add([files(
   'video.c',
+  'frame-file.c',
 )])
 
 # index aliases

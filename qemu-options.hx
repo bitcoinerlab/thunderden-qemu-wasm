@@ -1038,6 +1038,7 @@ SRST
 ERST
 
 DEF("videodev", HAS_ARG, QEMU_OPTION_videodev,
+    "-videodev frame-file,id=id,path=path\n"
 #ifdef CONFIG_VIDEO_V4L2
     "-videodev v4l2,id=id,device=path\n"
 #endif
