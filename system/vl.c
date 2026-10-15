@@ -3656,7 +3656,6 @@ void qemu_init(int argc, char **argv)
                 break;
             }
 #endif /* CONFIG_POSIX */
-#if defined(CONFIG_LINUX)
             case QEMU_OPTION_videodev:
                 opts = qemu_opts_parse_noisily(qemu_find_opts("videodev"),
                                                optarg, true);
@@ -3664,7 +3663,6 @@ void qemu_init(int argc, char **argv)
                     exit(1);
                 }
                 break;
-#endif /* CONFIG_LINUX */
             default:
                 error_report("Option not supported in this build");
                 exit(1);
