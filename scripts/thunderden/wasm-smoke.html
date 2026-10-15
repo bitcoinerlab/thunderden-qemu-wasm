@@ -1,0 +1,64 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>QEMU Wasm device smoke test</title>
+<script type="module">
+import init from '/qemu-system-x86_64.js';
+
+// A small test-only terminal endpoint, not a Thunderden guest adapter.
+const queue = [];
+const readers = new Set();
+window.smoke = {
+  output: '', errors: [],
+  send(text) {
+    queue.push(...new TextEncoder().encode(text + '\n'));
+    for (const fn of [...readers]) fn();
+  },
+};
+const pty = {
+  get readable() { return queue.length > 0; },
+  writable: true,
+  read: length => Uint8Array.from(queue.splice(0, length)),
+  write: bytes => { window.smoke.output += new TextDecoder().decode(Uint8Array.from(bytes)); },
+  onReadable(fn) {
+    readers.add(fn);
+    return { dispose: () => readers.delete(fn) };
+  },
+  onSignal: () => ({ dispose() {} }),
+  ioctl(command) {
+    if (command === 'TIOCGWINSZ') return [24, 80];
+    if (command === 'TCGETS') return { iflag: 0, oflag: 0, cflag: 0, lflag: 0, cc: new Uint8Array(32) };
+  },
+};
+
+try {
+  if (!crossOriginIsolated) throw new Error('COOP/COEP headers missing');
+  const mode = new URLSearchParams(location.search).get('mode');
+  const files = mode === 'device' ? await Promise.all(
+    ['bios-256k.bin', 'vgabios-stdvga.bin', 'kvmvapic.bin'].map(async name => {
+      const response = await fetch('/' + name);
+      if (!response.ok) throw new Error(`Cannot load ${name}`);
+      return [name, new Uint8Array(await response.arrayBuffer())];
+    }),
+  ) : [];
+  window.smoke.module = await init({
+    pty,
+    mainScriptUrlOrBlob: location.origin + '/qemu-system-x86_64.js',
+    arguments: mode === 'device' ? [
+      '-machine', 'q35', '-display', 'none', '-S', '-nic', 'none', '-L', '/bios',
+      '-device', 'virtio-rng-pci',
+      '-device', 'qemu-xhci,id=xhci',
+      '-videodev', 'frame-file,id=cam0,path=/camera.yuyv',
+      '-device', 'usb-video,bus=xhci.0,videodev=cam0', '-qmp', 'stdio',
+    ] : ['-videodev', 'help'],
+    preRun: [module => {
+      module.FS.mkdir('/bios');
+      for (const [name, bytes] of files) module.FS.writeFile('/bios/' + name, bytes);
+    }],
+    print: text => { window.smoke.output += text + '\n'; },
+    printErr: text => { window.smoke.errors.push(text); },
+    onAbort: error => { window.smoke.errors.push(String(error)); },
+  });
+} catch (error) {
+  window.smoke.errors.push(String(error));
+}
+</script>

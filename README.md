@@ -1,5 +1,9 @@
 # QEMU Wasm
 
+**Thunderden fork:** see [THUNDERDEN.md](THUNDERDEN.md) for the unchanged-image
+constraint, USB webcam integration and development build. The upstream README
+continues below.
+
 This is a patched QEMU to make it runnable inside the browser.
 JIT binary translation (TCG) with multi-thread support (Multi-Threaded TCG) is also enabled.
 
