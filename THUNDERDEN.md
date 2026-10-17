@@ -2,11 +2,19 @@
 
 This fork provides the virtual computer behind
 [Thunder Den Web](https://github.com/bitcoinerlab/thunderden-web).
-[Thunder Den](https://github.com/bitcoinerlab/thunderden) is a small Linux system
-that turns a spare laptop into an air-gapped Bitcoin signer. Here, QEMU emulates
-that laptop inside a browser using WebAssembly, including a virtual USB webcam
-for QR scanning. The website supplies the screen, keyboard controls and optional
-browser-camera capture; this repository supplies the emulator and its build tools.
+[Thunder Den](https://github.com/bitcoinerlab/thunderden) turns a spare laptop into
+an offline Bitcoin signer: a computer that checks and signs transactions without
+connecting to the internet. Normally, you start its small Linux system from a
+USB drive.
+It keeps recovery words and private keys on that computer, and uses QR codes to
+exchange wallet information and transactions with another device.
+
+Here, QEMU imitates that laptop, including a USB webcam for QR scanning.
+WebAssembly lets the emulator run inside a browser. Thunder Den's own software
+runs inside the virtual computer; its menus are not recreated in JavaScript.
+The companion website supplies the screen, keyboard controls and optional camera
+capture. This repository supplies the emulator and its build tools. To try the
+demo, start with the [website's README](https://github.com/bitcoinerlab/thunderden-web#run-locally).
 
 **This is an experimental demo, not a signer for real funds.** A browser is not
 an air-gapped device. Use only public test fixtures, never real recovery words.
@@ -50,10 +58,9 @@ The builder uses Emscripten 3.1.50 rather than a host-installed SDK. Its Dockerf
 backports the upstream synchronous-proxy lifetime correction
 [#26582](https://github.com/emscripten-core/emscripten/pull/26582), commit
 `f3fef05bf5d63df33ed21eb067b86d827c546bfa`, and rebuilds both threaded libc
-variants. The correction signals completion before releasing the context mutex,
-so a caller cannot retire its stack context before the signalling thread's final
-access. It changes the emulator runtime, not Thunder Den. Rebuild the builder and
-emulator together, then rerun website setup when changing this runtime.
+variants. It fixes a lifetime race in synchronous calls between runtime threads,
+not guest code. Rebuild the builder and emulator together, then rerun website
+setup when changing this runtime.
 
 ### Runtime smoke test
 
@@ -106,9 +113,8 @@ not error-marked UVC headers that would make the guest reject a capture buffer.
 Actual backend read failures still fail the transfer; guest validation is not
 bypassed.
 
-The website uses EHCI because its end-to-end Wasm scan passed. An xHCI
-configuration registered and passed native scanning but timed out during Wasm
-guest scanning; its cause has not been isolated.
+EHCI is the tested browser configuration. xHCI guest scanning in Wasm remains
+unresolved; device registration alone does not establish a working camera flow.
 
 ## Browser boot
 
@@ -194,15 +200,16 @@ startup failures and one animated transaction QR fixture that cancels at review
 without signing. Synthetic webcams do not establish physical-camera compatibility
 or support for every animated QR format.
 
-Camera-based randomness is not working end to end. Synthetic collection can
-finish, but statistical assessment has exceeded the unchanged guest's time limit.
-The website's collection test checks delivery and cancellation, not entropy
-quality or successful word generation. The generated Emscripten loader uses
-Web Crypto's `crypto.getRandomValues()` for its random device, but the guest RNG
-path and recovery-word generation still need end-to-end browser validation.
-Never substitute deterministic seeds or `Math.random()` for that path.
+Recovery-word generation, including camera-based randomness, is not validated
+end to end in the pinned preview.8 browser demo. Synthetic collection can finish
+while statistical assessment exceeds that release's time limit. The collection
+test checks delivery and cancellation, not entropy quality or successful word
+generation. The generated Emscripten loader uses Web Crypto's
+`crypto.getRandomValues()` for its random device, but the guest random-number
+path still needs end-to-end browser validation. Never substitute deterministic
+seeds or `Math.random()` for that path.
 
-Physical webcams, broader QR coverage, macOS, Safari, Firefox and actual
-background-tab/resume behavior need further validation. Screen refresh rate,
-camera-frame age and guest camera throughput are separate measurements; no
+Physical webcams, broader QR coverage, other browsers and operating systems,
+and actual background-tab/resume behavior need further validation. Screen refresh
+rate, camera-frame age and guest camera throughput are separate measurements; no
 cross-platform performance or signing-security guarantee is made.
