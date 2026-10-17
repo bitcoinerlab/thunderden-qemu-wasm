@@ -1,50 +1,35 @@
-# Thunderden browser emulator
+# Thunder Den browser emulator
+
+This fork provides the virtual computer behind
+[Thunder Den Web](https://github.com/bitcoinerlab/thunderden-web).
+[Thunder Den](https://github.com/bitcoinerlab/thunderden) is a small Linux system
+that turns a spare laptop into an air-gapped Bitcoin signer. Here, QEMU emulates
+that laptop inside a browser using WebAssembly, including a virtual USB webcam
+for QR scanning. The website supplies the screen, keyboard controls and optional
+browser-camera capture; this repository supplies the emulator and its build tools.
+
+**This is an experimental demo, not a signer for real funds.** A browser is not
+an air-gapped device. Use only public test fixtures, never real recovery words.
+The integration runs the original Thunder Den software: the release image stays
+byte-for-byte unchanged, with no guest agent, replacement application, kernel
+module or extra initramfs.
+
+## Upstream projects
 
 This fork combines:
 
 - [ktock/qemu-wasm](https://github.com/ktock/qemu-wasm), based on QEMU 8.2,
   at `0ef7b4e2814b231705d8371dd7997f5b72e70baf`;
-- 9elements' UVC video subsystem, backported from commit
+- 9elements' USB Video Class (UVC) subsystem, backported from
   [`72ecd6a1af0f2c7602eb3ecbadceb8f39ee1fe70`](https://github.com/9elements/qemu/commit/72ecd6a1af0f2c7602eb3ecbadceb8f39ee1fe70);
-- a host-side `frame-file` camera backend for native fixtures and browser capture.
+- a `frame-file` camera backend for native tests and browser capture.
 
-The website lives in
-[thunderden-web](https://github.com/bitcoinerlab/thunderden-web).
-**Thunderden's release image must remain byte-for-byte unchanged.** Do not add a
-guest agent, replacement scanner, kernel module or extra initramfs.
-
-## Camera interface
-
-Attach the standard UVC device to a virtual USB 2 EHCI controller, as used by
-the companion website:
-
-```sh
--device usb-ehci,id=ehci \
--videodev frame-file,id=cam0,path=/camera.yuyv,mode=browser \
--device usb-video,bus=ehci.0,videodev=cam0
-```
-
-`path` is in the **emulator host** filesystem (Emscripten's FS in a browser), not
-the guest filesystem. It contains one complete, row-major YUYV frame, no padding:
-
-| Mode | Dimensions | Bytes | Virtual frame rate |
-| --- | --- | --- | --- |
-| `standard` (default) | 640×480 | 614,400 | 10 fps |
-| `browser` | 320×240 | 153,600 | 2 fps |
-
-Publish new frames by writing another file and atomically renaming it over this
-path. Frames already being read retain their original inode. This camera interface
-uses ordinary host files rather than guest-memory injection. The browser mode
-reduces capture/decoding work and old-frame buffering in the emulated guest.
-
-The same camera device and frame backend are exercised natively and through
-browser capture. It is not physical USB passthrough and does not require WebUSB
-or a USB-connected host camera.
+The original [README](README.md) retains the upstream instructions and examples.
+The commands below describe the Thunder Den integration.
 
 ## Wasm build
 
-Docker builds use the upstream Emscripten 3.1.50 toolchain; the host's Emscripten
-version is not used. The original build instructions remain in `README.md`.
+You need Docker. Run these commands from the root of this repository:
 
 ```sh
 docker build -t thunderden-qemu-wasm-builder .
@@ -55,18 +40,106 @@ docker run --rm \
   thunderden-qemu-wasm-builder sh /qemu/scripts/thunderden/compile-wasm.sh
 ```
 
-The loader, worker, Wasm binary and BIOS assets are written to
+The loader, worker, Wasm binary and BIOS files are written to
 `build/thunderden-wasm/emulator/`. These are generated artifacts, not source files.
-The emulator itself is headless. The companion website now presents its framebuffer
-and forwards keyboard input using QMP, without changing the guest. See
-[the website's local-start instructions](https://github.com/bitcoinerlab/thunderden-web#open-the-interactive-prototype-locally).
-The website's **Enable camera** button requests browser permission and feeds
-local frames to the existing host-side camera backend.
+Keep this checkout beside `thunderden-web`, then follow the
+[website's local setup instructions](https://github.com/bitcoinerlab/thunderden-web#run-locally)
+to copy the assets and start the demo.
+
+The builder uses Emscripten 3.1.50 rather than a host-installed SDK. Its Dockerfile
+backports the upstream synchronous-proxy lifetime correction
+[#26582](https://github.com/emscripten-core/emscripten/pull/26582), commit
+`f3fef05bf5d63df33ed21eb067b86d827c546bfa`, and rebuilds both threaded libc
+variants. The correction signals completion before releasing the context mutex,
+so a caller cannot retire its stack context before the signalling thread's final
+access. It changes the emulator runtime, not Thunder Den. Rebuild the builder and
+emulator together, then rerun website setup when changing this runtime.
+
+### Runtime smoke test
+
+This standalone check exercises 200,000 synchronous runtime calls. It needs
+Node.js and the Docker builder, but no guest image or wallet material:
+
+```sh
+mkdir -p build/runtime-proxy
+docker run --rm -v "$PWD:/qemu:ro" -v "$PWD/build/runtime-proxy:/out" \
+  thunderden-qemu-wasm-builder emcc /qemu/scripts/thunderden/test-runtime-proxy.c \
+  -O2 -pthread -sPROXY_TO_PTHREAD=1 -sPTHREAD_POOL_SIZE=5 \
+  -sENVIRONMENT=node -sEXIT_RUNTIME=1 -o /out/proxy.cjs
+node build/runtime-proxy/proxy.cjs
+```
+
+This is a stress smoke test, not a deterministic reproduction of the upstream
+race or proof that every intermittent emulator-control stall is resolved.
+
+## Camera interface
+
+The website turns local browser video into complete frames and supplies them to
+the emulator's host filesystem. The `frame-file` backend reads those frames and
+presents a standard USB webcam to Thunder Den's existing driver and QR reader.
+There is no guest-memory injection, physical USB passthrough or WebUSB dependency.
+
+Attach the camera to a virtual USB 2 EHCI controller:
+
+```sh
+-device usb-ehci,id=ehci \
+-videodev frame-file,id=cam0,path=/camera.yuyv,mode=browser \
+-device usb-video,bus=ehci.0,videodev=cam0
+```
+
+`path` is in the **emulator host** filesystem (Emscripten's filesystem in a
+browser), not the guest filesystem. It contains one complete, row-major YUYV
+frame with no padding:
+
+| Mode | Dimensions | Bytes per frame | Target frame rate |
+| --- | --- | --- | --- |
+| `standard` (default) | 640×480 | 614,400 | 10 fps |
+| `browser` | 320×240 | 153,600 | 10 fps |
+
+Publish a frame by writing another file and atomically renaming it over this
+path. Readers already using the previous file keep its original inode. The
+smaller browser profile reduces capture and decoding work, but its target cadence
+does not guarantee that the emulated guest can display ten new frames per second.
+
+Normal gaps between scheduled frames return zero-length isochronous transfers,
+not error-marked UVC headers that would make the guest reject a capture buffer.
+Actual backend read failures still fail the transfer; guest validation is not
+bypassed.
+
+The website uses EHCI because its end-to-end Wasm scan passed. An xHCI
+configuration registered and passed native scanning but timed out during Wasm
+guest scanning; its cause has not been isolated.
+
+## Browser boot
+
+The companion website verifies its pinned release image, reads the existing
+`/bzImage` from the FAT32 boot partition and supplies it to QEMU's `-kernel`
+option. The root filesystem and applications are built into this kernel. No
+separate kernel download, replacement application or extra initramfs is needed.
+The original image remains attached as a read-only virtio disk:
+
+```sh
+-drive file=/thunderden.img,format=raw,if=virtio,readonly=on
+```
+
+The single-CPU browser profile uses:
+
+```sh
+-kernel /thunderden-kernel -no-acpi \
+-append 'console=tty1 quiet loglevel=3 acpi=off random.trust_cpu=off random.trust_bootloader=off'
+```
+
+Disabling ACPI reduces firmware discovery work in the emulated machine. The
+website covers quiet startup until it recognizes the original network menu;
+raw console viewing and manual control remain available. The kernel and image
+are unchanged, but **direct boot skips GRUB**. This demo does not validate the
+USB bootloader, UEFI or Secure Boot. Native image-camera tests use disk boot.
 
 ## Native development
 
-QEMU Wasm defaults to its Emscripten coroutine backend even in native builds;
-select `--with-coroutine=ucontext` explicitly on Linux. For a minimal native build:
+QEMU Wasm defaults to its Emscripten coroutine backend even in native builds.
+Select `--with-coroutine=ucontext` explicitly on Linux. With the native QEMU
+build dependencies installed, a minimal build is:
 
 ```sh
 mkdir -p build/native
@@ -77,107 +150,59 @@ cd build/native
 make -j4 qemu-system-x86_64
 ```
 
-Use `-nic none`, a virtual RNG, and `snapshot=on` for guest-image testing. Test
-only public recovery-word fixtures; never put real wallet material in logs or
-screenshots. The native image/QR test records image hashes before and after.
+For guest-image tests, disable networking with `-nic none`, supply a virtual RNG
+and use either `snapshot=on` or a read-only disk. Never put real wallet material
+in test inputs, logs or screenshots. The image-camera test compares image hashes
+before and after the run.
 
-## Checks
+## Integration checks
+
+Run these from the repository root. The native camera test additionally needs
+Pillow, `qrencode` and `tesseract`. The Wasm smoke test needs Python Playwright
+and Chromium.
 
 ```sh
 python3 scripts/thunderden/test-video-device.py build/native/qemu-system-x86_64
-# Requires Pillow, qrencode and tesseract:
 python3 scripts/thunderden/test-image-camera.py \
   build/native/qemu-system-x86_64 /path/to/thunderden.img /path/to/new-test-output
-# Match the browser's read-only virtio boot disk:
+# Use the browser's read-only disk and smaller camera mode:
 python3 scripts/thunderden/test-image-camera.py \
   build/native/qemu-system-x86_64 /path/to/thunderden.img /path/to/other-test-output \
-  --virtio-readonly
-# Exercise the smaller, lower-rate camera mode:
-python3 scripts/thunderden/test-image-camera.py \
-  build/native/qemu-system-x86_64 /path/to/thunderden.img /path/to/browser-mode-test-output \
   --virtio-readonly --camera-mode browser
-# Requires Python Playwright and an installed Chromium:
 python3 scripts/thunderden/test-wasm.py build/thunderden-wasm/emulator \
   --chromium /path/to/chromium
 ```
 
-On 2026-10-15, the native integration test passed using the downloaded, checksum-
-verified `v0.0.1-preview.8` release. The real image booted, its isolated scanner
-decoded a QR through the emulated USB webcam, and its address verifier confirmed
-the public BIP39 fixture's first BIP84 receiving address. Image SHA-256 before
-and after:
+Image-camera checks use the public BIP39 `abandon`/`about` vector and the unchanged
+`v0.0.1-preview.8` release. Its SHA-256 is:
 
 ```text
 43f3a7b9bcb5febea564f2f02a4137cb176c73a31392abe98581865094b94d4d
 ```
 
-Native registration, QOM property reads and repeated unplug/replug also passed.
-The full native camera/address proof also passed with `--virtio-readonly`, matching
-the website's boot-disk configuration, with the same before/after image hash.
-The Wasm build produced a roughly 12 MiB binary. Both browser smoke tests passed
-in headless Chromium on Linux: backend discovery, then QMP startup with an emulated
-UVC camera and virtio RNG device. These do not boot the guest image, deliver camera
-frames or validate recovery-word generation in the browser.
+Native checks cover device registration, property reads, unplug/replug and an
+actual guest QR/address flow. The Wasm smoke test checks backend discovery and
+QEMU monitor startup with the virtual webcam and RNG; it does not boot Thunder
+Den or deliver camera frames. End-to-end browser tests live in the
+[website's development guide](https://github.com/bitcoinerlab/thunderden-web/blob/main/docs/DEVELOPMENT.md).
 
-The generated Emscripten loader uses Web Crypto's `crypto.getRandomValues()` for
-its random device. The guest RNG path still needs an end-to-end generation check;
-never replace it with deterministic seeds, snapshots or `Math.random()`.
+## Current limits
 
-## Interactive browser boot
+Recorded native and Linux/Chromium checks cover the public QR/address flow.
+Browser checks also cover keyboard navigation, camera permission/lifecycle,
+startup failures and one animated transaction QR fixture that cancels at review
+without signing. Synthetic webcams do not establish physical-camera compatibility
+or support for every animated QR format.
 
-On 2026-10-15 the companion website booted the same checksum-pinned preview.8 image
-inside Chromium on Linux. An automated check read the actual framebuffer and used
-browser keyboard events to select Regtest, enter the public-key menu and return
-with Escape. The network chooser appeared in about 23 seconds.
+Camera-based randomness is not working end to end. Synthetic collection can
+finish, but statistical assessment has exceeded the unchanged guest's time limit.
+The website's collection test checks delivery and cancellation, not entropy
+quality or successful word generation. The generated Emscripten loader uses
+Web Crypto's `crypto.getRandomValues()` for its random device, but the guest RNG
+path and recovery-word generation still need end-to-end browser validation.
+Never substitute deterministic seeds or `Math.random()` for that path.
 
-The working browser configuration uses a read-only virtio boot disk:
-
-```sh
--drive file=/thunderden.img,format=raw,if=virtio,readonly=on
-```
-
-IDE snapshot initialization stalled in the browser; its exact cause has not been
-isolated. Keep the proven read-only virtio configuration for the website.
-
-## Browser camera integration
-
-### Browser camera proof
-
-On 2026-10-15, the companion website's camera test passed in Chromium on Linux.
-Chromium's synthetic webcam delivered a public fixture QR through the real
-`getUserMedia()` API, RGBA-to-YUYV conversion, host frame file and emulated UVC
-device. The unchanged preview.8 image decoded it and verified the fixture address.
-Permission denial/retry, camera stop/restart and disconnection handling also passed.
-No physical webcam was accessed, and no real wallet material was used.
-
-The website uses EHCI for this path. xHCI device registration and native scanning
-passed earlier, but its Wasm guest scanner timed out despite receiving USB video
-data. EHCI passed the end-to-end browser scan without changing the guest image
-or guest clock configuration. The cause of the xHCI timeout is not isolated.
-
-### Responsiveness
-
-The website now uses a 640×480 guest display and the `browser` camera mode. A
-Linux/Chromium numbered-video comparison measured about 0.5 seconds of camera
-frame age, versus 7–8 seconds with the original 1280×800 display and 640×480/10 fps
-camera. The original guest's software preview rendering is expensive under x86-64
-Wasm emulation; feeding frames faster than it can consume them produces stale
-frames. Merely increasing website repaint frequency does not remove that backlog.
-
-The website separately reduced its screenshot wait from 500 ms to 33 ms, keeping
-one request in flight. Camera frame age, display refresh cadence and guest camera
-frame rate are different measurements. The browser mode intentionally caps the
-virtual camera at 2 fps, and does not establish macOS or physical-webcam performance.
-
-Both camera modes passed the native public-fixture QR/address test, with the
-unchanged release hash above. The website's 120-second numbered-video check
-measured about 0.51 seconds median frame age, 0.79 seconds maximum observed age
-and 1.99 complete frame changes per second, then cancelled the original scanner.
-
-### Remaining checks
-
-1. Test physical webcams and animated QR streams; repeat cancellation across browsers.
-2. Verify guest RNG initialization and recovery-word generation without camera
-   entropy. Camera entropy/NIST assessment and its timing need separate testing.
-3. Measure on Chrome/macOS, including Apple Silicon, before claiming support;
-   Safari and Firefox are separate validation targets.
+Physical webcams, broader QR coverage, macOS, Safari, Firefox and actual
+background-tab/resume behavior need further validation. Screen refresh rate,
+camera-frame age and guest camera throughput are separate measurements; no
+cross-platform performance or signing-security guarantee is made.

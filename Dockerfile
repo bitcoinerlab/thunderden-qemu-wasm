@@ -141,4 +141,17 @@ COPY --link --from=build-dev /build/ /build/
 COPY --link --from=pixman-emscripten-dev /build/ /build/
 WORKDIR /build/
 RUN npm i xterm-pty@v0.10.1
+# Backport Emscripten f3fef05bf5d63df33ed21eb067b86d827c546bfa (#26582).
+# A synchronous caller can retire its stack context as soon as it is unlocked;
+# signal the condition variable before releasing that context's mutex.
+RUN python3 - <<'PY'
+from pathlib import Path
+path = Path('/emsdk/upstream/emscripten/system/lib/pthread/proxying.c')
+source = path.read_text()
+old = '    pthread_mutex_unlock(&ctx->sync.mutex);\n    pthread_cond_signal(&ctx->sync.cond);'
+new = '    pthread_cond_signal(&ctx->sync.cond);\n    pthread_mutex_unlock(&ctx->sync.mutex);'
+assert source.count(old) == 2, 'Review the proxying backport when changing the SDK'
+path.write_text(source.replace(old, new))
+PY
+RUN embuilder --force build libc-mt libc-mt-debug
 CMD sleep infinity

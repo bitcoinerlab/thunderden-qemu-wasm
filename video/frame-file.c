@@ -41,10 +41,10 @@ static int frame_file_open(Videodev *vd, QemuOpts *opts, Error **errp)
         vd_error_setg(vd, errp, "frame-file mode must be standard or browser");
         return VIDEODEV_RC_INVAL;
     }
-    /* Keep the native fixture mode; reduce browser work and stale frame queues. */
+    /* Keep small browser frames without starving frame-based collection. */
     s->width = browser ? 320 : 640;
     s->height = browser ? 240 : 480;
-    s->fps = browser ? 2 : 10;
+    s->fps = 10;
     s->path = g_strdup(path);
     return VIDEODEV_RC_OK;
 }

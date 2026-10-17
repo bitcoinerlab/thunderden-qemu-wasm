@@ -770,20 +770,6 @@ static void usb_video_handle_data_control_in(USBDevice *dev, USBPacket *p)
     trace_usb_video_handle_data_control_in(bus->busnr, dev->addr, len);
 }
 
-static void usb_video_send_empty_packet(USBDevice *dev, USBPacket *p)
-{
-    USBVideoState *s = USB_VIDEO(dev);
-
-    VideoImagePayloadHeader header = {
-
-        .bmHeaderInfo  = PAYLOAD_HEADER_EOH | PAYLOAD_HEADER_ERR,
-        .bHeaderLength = 2
-    };
-
-    usb_packet_copy(p, &header, header.bHeaderLength);
-    s->streaming_error = VS_ERROR_INPUT_BUFFER_UNDERRUN;
-}
-
 static void usb_video_handle_data_streaming_in(USBDevice *dev, USBPacket *p)
 {
     USBVideoState *s = USB_VIDEO(dev);
@@ -820,7 +806,8 @@ static void usb_video_handle_data_streaming_in(USBDevice *dev, USBPacket *p)
     if (rc == VIDEODEV_RC_UNDERRUN) {
 
         error_free(err);
-        usb_video_send_empty_packet(dev, p);
+        /* No frame is due yet: return an empty isochronous transfer, not
+         * an error-marked UVC header that poisons the next capture buffer. */
         p->status = USB_RET_SUCCESS;
         return;
     }
